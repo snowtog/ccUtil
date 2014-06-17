@@ -5,18 +5,25 @@
 # PURPOSE		:	This Perl script is a set of useful ClearCase utilities
 #
 my ${Author}	= "Chris Elliott" ;
-my ${Date}		= "2008/09/25" ;
-my ${Version}	= "v03.08" ;
+my ${Date}		= "2008/09/30" ;
+my ${Version}	= "v04.02" ;
 #
 #########1#########2#########3#########4#########5#########6#########7#########8
 
 # Include additional Perl Modules
+ BEGIN
+	{
+	  push (@INC,'\\\Rlchscmpfs07\CSRisk\Grm\Support\SCM\Perllib');
+	}
 
 use Cwd ;
 use File::Basename ;
 use File::Copy ;
+use File::Copy::Recursive qw(fcopy rcopy dircopy fmove rmove dirmove) ;
 use File::Find ;
+use File::Path ;
 use Getopt::Long ;
+use IO::File ;
 use strict ;
 use warnings ;
 
@@ -25,7 +32,7 @@ use warnings ;
 #########1#########2#########3#########4#########5#########6#########7#########8
  # Filename
 	my ${filename}  = basename($0) ;
-	my ${fileTile}  = basename($0, ".pl") ;
+	my ${programName}  = basename($0, ".pl") ;
  # Save start directory
 	my ${startDir} = cwd ;
  # Site Variables
@@ -55,8 +62,11 @@ use warnings ;
 	$dttime{isdst}  = $isdst;
  # TAR Archive
 	my ${genRelScript} = "\\\\Rlchscmpfs07\\CSRisk\\GRM\\SUPPORT\\SCM\\grdwGenRel.pl" ;
-	my ${tarfile} ;
+	my ${tarCodeDir} ;
+	my ${tarDir} ;
 	my ${tarExe} = "\\\\Rlchscmpfs07\\CSRisk\\GRM\\SUPPORT\\SCM\\tar.exe" ;
+	my ${tarfile} ;
+	my ${tarInstallDir} ;
  # ClearCase Directories
 	my ${slash} = "\\" ;
 	my ${share_drive} = "C:" ;
@@ -72,11 +82,10 @@ use warnings ;
 	my ${ccPerl} = "ccperl.exe" ;
 	my ${config_spec} ;
 	my ${ct} = "cleartool" ;
-	my ${currentDir} ;
 	my ${elementType} ;
 	my ${found_bls} ;
 	my ${latest_bls} ;
-	my ${logfile} = ${logdir}.${slash}.".".${fileTile}.".log" ;
+	my ${logfile} = ${logdir}.${slash}.".".${programName}.".log" ;
 	my ${myViews} ;
 	my ${rec_bls} ;
 	my ${usersView} ;
@@ -93,8 +102,8 @@ use warnings ;
 	my @{rec_blss} ;
  # Working Scalars
 	my ${answer} ;
-	my ${batchmode} ;
 	my ${cmd} ;
+	my ${currentDirectory} ;
 	my ${exitLevel} = 0 ;
 	my ${noexit} ;
 	my ${tag} ;
@@ -113,12 +122,12 @@ use warnings ;
 	my ${dynamicView} ;
 	my ${force} ;
 	my ${loadView} ;
+	my ${menuMode} ;
 	my ${obsoleteActivity} ;
 	my ${obsoleteProject} ;
 	my ${rebaseStage} ;
 	my ${rebaseStream} ;
 	my ${releaseStage} ;
-	my ${releaseStream} ;
 	my ${removeAllViews} ;
 	my ${removeProject} ;
 	my ${removeView} ;
@@ -130,6 +139,7 @@ use warnings ;
 	GetOptions (
 				'blankView:s'			=>		\${blankView},
 				'commandLineMode'		=>		\${commandLineMode},
+				'menuMode'				=>		\${menuMode},
 				'createProject:s'		=>		\${createProject},
 				'debug=i'				=>		\${debug},
 				'dynamicView:s'			=>		\${dynamicView},
@@ -140,7 +150,6 @@ use warnings ;
 				'rebaseStage:s'			=>		\${rebaseStage},
 				'rebaseStream:s'		=>		\${rebaseStream},
 				'releaseStage:s'		=>		\${releaseStage},
-				'releaseStream:s'		=>		\${releaseStream},
 				'removeAllViews:s'		=>		\${removeAllViews},
 				'removeProject:s'		=>		\${removeProject},
 				'removeView:s'			=>		\${removeView},
@@ -149,26 +158,6 @@ use warnings ;
 				'tarStream:s'			=>		\${tarStream},
 				'unlockProject:s'		=>		\${unlockProject},
 			   );
-
-   # This lot just sets the batchmode - a better way must be possible ??
-	(defined ${blankView}) && (${batchmode} = "true") ;
-	(defined(${commandLineMode}) && ${commandLineMode} ne "") && (${batchmode} = "true") ;
-	(defined(${createProject}) && ${createProject} ne "") && (${batchmode} = "true") ;
-	(defined(${dynamicView}) && ${dynamicView} ne "") && (${batchmode} = "true") ;
-	(defined(${loadView}) && ${loadView} ne "") && (${batchmode} = "true") ;
-	(defined(${obsoleteActivity}) && ${obsoleteActivity} ne "") && (${batchmode} = "true") ;
-	(defined(${obsoleteProject}) && ${obsoleteProject} ne "") && (${batchmode} = "true") ;
-	(defined(${rebaseStage}) && ${rebaseStage} ne "") && (${batchmode} = "true") ;
-	(defined(${rebaseStream}) && ${rebaseStream} ne "") && (${batchmode} = "true") ;
-	(defined(${releaseStage}) && ${releaseStage} ne "") && (${batchmode} = "true") ;
-	(defined(${releaseStream}) && ${releaseStream} ne "") && (${batchmode} = "true") ;
-	(defined(${removeAllViews}) && ${removeAllViews} ne "") && (${batchmode} = "true") ;
-	(defined(${removeProject}) && ${removeProject} ne "") && (${batchmode} = "true") ;
-	(defined(${removeView}) && ${removeView} ne "") && (${batchmode} = "true") ;
-	(defined(${stageView}) && ${stageView} ne "") && (${batchmode} = "true") ;
-	(defined(${streamView}) && ${streamView} ne "") && (${batchmode} = "true") ;
-	(defined(${tarStream}) && ${tarStream} ne "") && (${batchmode} = "true") ;
-	(defined(${unlockProject}) && ${unlockProject} ne "") && (${batchmode} = "true") ;
 
 #########1#########2#########3#########4#########5#########6#########7#########8
 # Subroutine Declaration
@@ -195,8 +184,7 @@ sub sub_usage()
 	print "\t[-loadView <streamname>]\t\tCreate Snapshot View (Loads latest baseline) \n" ;
 	print "\t[-stageView <streamname>]\t\tCreate Snapshot View (Loads foundation baseline)\n" ;
 	print "\t[-streamView <streamname>]\t\tCreate Snapshot View (Loads edited files)\n" ;
-	print "\t[-releaseStage <streamname>]\t\tCreate Snapshot View then generate MAP and TAR files\n" ;
-	print "\t[-releaseStream <streamname>]\t\tCreate Snapshot View and TAR files\n" ;
+	print "\t[-releaseStage <streamname>]\t\tCreate Snapshot View and TAR files\n" ;
 	print "\t[-createProject <projectname>]\t\tCreate Project\n" ;
 	print "\t[-obsoleteActivity <projectname>]\tObsolete all projects activities\n" ;
 	print "\t[-obsoleteProject <projectname>]\tObsolete an entire project\n" ;
@@ -208,8 +196,11 @@ sub sub_usage()
 	print "\t[-removeAllViews]\t\t\tRemove all your views on this PC\n" ;
 
 	print "\n\t[-CommandLineMode]\t\t\tAllows you to enter options\n" ;
-	print "\n\t[-Debug 0|1|2|3]\t\t\tSets the level of debugging information (default = 1)\n" ;
-	print "\t[-force]\t\t\t\tNo questions\n" ;
+	print "\n\t[-menuMode]\t\t\tClears the screen and pauses upon completion\n" ;
+	print "\n\t[-debug 0|1|2|3]\t\t\tSets the level of debugging information (default = 1)\n" ;
+	print "\t[-force]\t\t\t\tNo confirmation\n" ;
+	
+	print "\n\t<Return> = null answer\t\t\tExit Program\n" ;
 }
 
 sub sub_utilityDetails()
@@ -217,8 +208,8 @@ sub sub_utilityDetails()
    # Subroutine to display Filename & Version details etc.
 	(${debug} > 2) && &sub_debug(5, "-> sub_utilityDetails") ;
    # Clears the screen
-	( (${debug} < 2) and (! defined ${batchmode}) ) && system(($^O eq 'MSWin32') ? 'cls' : 'clear') ;
-	&sub_logmsg (3, "${fileTile} - Version: ${Version}") ;
+	(defined(${menuMode})) && system(($^O eq 'MSWin32') ? 'cls' : 'clear') ;
+	&sub_logmsg (3, "${programName} - Version: ${Version}") ;
 	&sub_logmsg (3, "ClearCase Region Information: ${pvob}") ;
 	(${debug} > 2) && &sub_debug(5, "<- sub_utilityDetails") ;
 }
@@ -254,7 +245,7 @@ sub sub_askQuestion()
    # Exit if blank answer
 	if (${answer} eq "")
 		{
-		  &sub_controlExit(3, "-- ${fileTile} exiting --") ;
+		  (${ccobject} eq "comment") ? ${answer} = "No Description provided" : &sub_controlExit(3, "-- ${programName} exiting --") ;
 		}
    # List possible answers
 	elsif (${answer} eq "?")
@@ -274,7 +265,7 @@ sub sub_runSystemCommand()
    # Run the command and save the exit status
 	system("${cmd}") ;
 	${exitLevel} = $? ;
-	(${debug} > 1) && &sub_debug(3, "Exit Level: ${exitLevel}") ;
+	(${debug} > 1) && &sub_debug(3, "Exit Level: ${exitLevel} - $!") ;
 	(${debug} > 2) && &sub_debug(5, "<- sub_runSystemCommand)") ;
 }
 
@@ -287,7 +278,7 @@ sub sub_controlExit()
 	&sub_logmsg(${msgType}, ${message});
 	(${debug} > 1) && &sub_debug(${msgType}, "Exit Level: ${exitLevel}") ;
 	close LOGFILE ;
-	if (! defined ${batchmode})
+	if (defined ${menuMode})
 		{
 		  print "\n<Return> to close ..." ;
 		  <STDIN> ;
@@ -368,16 +359,29 @@ sub sub_listCCobject()
 	if (${ccobject} eq "stream")
 		{
 		  print "\n" ;
+		 # List the Streams
 		  ${cmd} = ${ct}." ls".${ccobject}." -fmt \"%n\t \" "."-invob ".${slash}.${pvob} ;
 		  &sub_runSystemCommand(0) ;
 		}
 	elsif (${ccobject} eq "view")
 		{
 		  print "\n" ;
-		 # List the users view only
+		 # List the users views only
 		  ${cmd} = ${ct}." ls".${ccobject}." -short ".${user}."*" ;
 		  &sub_runSystemCommand(0) ;
 		}
+	elsif (${ccobject} eq "folder")
+		{
+		  print "\n" ;
+		 # List the Project Folders
+		  ${cmd} = ${ct}." ls".${ccobject}." -ancestor -depth 2 -invob ".${slash}.${pvob} ;
+		  &sub_runSystemCommand(0) ;
+		}
+	elsif (${ccobject} eq "usage")
+		{
+		 # List the Usage Message
+		  &sub_usage ;
+		}		
    # List available baselines
 	elsif (${ccobject} eq "bl")
 		{
@@ -431,7 +435,7 @@ sub sub_createProject()
    # Subroutine to create a ClearCase Project
 	(${debug} > 2) && &sub_debug(5, "-> sub_createProject") ;
    # Build and Run the ClearCase Command to create a project
-	${cmd} = ${ct}." mkproject -comment \"New Project\" -modcomp ".${project}{"component"}." -in ".${project}{"folder"}."@".${slash}.${pvob}." ".${project}{"project"}."@".${slash}.${pvob} ;
+	${cmd} = ${ct}." mkproject -comment \"".${project}{"comment"}."\" -modcomp ".${project}{"component"}." -in ".${project}{"folder"}."@".${slash}.${pvob}." ".${project}{"project"}."@".${slash}.${pvob} ;
 	&sub_runSystemCommand(0) ;
 	(${debug} > 2) && &sub_debug(5, "<- sub_createProject") ;
 }
@@ -441,7 +445,7 @@ sub sub_createIntegrationStream()
    # Subroutine to create a ClearCase Integration Stream
 	(${debug} > 2) && &sub_debug(5, "-> sub_createIntegrationStream") ;
    # Build and Run the ClearCase Command to create an integration stream
-	${cmd} = ${ct}." mkstream -integration -comment \"Integration Stream\" -in ".${project}{"project"}."@".${slash}.${pvob}." -target ".${project}{"target"}."@".${slash}.${pvob}." -baseline ".${project}{"bl"}." ".${project}{"stream"}."@".${slash}.${pvob} ;
+	${cmd} = ${ct}." mkstream -integration -comment \"".${project}{"comment"}." - LDN Development\" -in ".${project}{"project"}."@".${slash}.${pvob}." -target ".${project}{"target"}."@".${slash}.${pvob}." -baseline ".${project}{"bl"}." ".${project}{"stream"}."@".${slash}.${pvob} ;
 	&sub_runSystemCommand(0) ;
 	(${debug} > 2) && &sub_debug(5, "<- sub_createIntegrationStream") ;
 }
@@ -451,7 +455,7 @@ sub sub_createDevelopmentStream()
    # Subroutine to create a ClearCase development Stream
 	(${debug} > 2) && &sub_debug(5, "-> sub_createDevelopmentStream") ;
    # Build and Run the ClearCase Command to create an integration stream
-	${cmd} = ${ct}." mkstream -comment \"Development Stream\" -in ".${project}{"stream"}."@".${slash}.${pvob}." -baseline ".${project}{"bl"}." ".${project}{"development"}."@".${slash}.${pvob} ;
+	${cmd} = ${ct}." mkstream -comment \"".${project}{"comment"}." - IDC Development\" -in ".${project}{"stream"}."@".${slash}.${pvob}." -baseline ".${project}{"bl"}." ".${project}{"development"}."@".${slash}.${pvob} ;
 	&sub_runSystemCommand(0) ;
 	(${debug} > 2) && &sub_debug(5, "<- sub_createDevelopmentStream") ;
 }
@@ -538,7 +542,7 @@ sub sub_removeView()
 		 # if we are removing all the views or just rebasing a stream
 		  elsif (! defined ${noexit})
 			{
-			  &sub_controlExit(3, "-- ${fileTile} exiting --") ;
+			  &sub_controlExit(3, "-- ${programName} exiting --") ;
 			}
 		}
 	else
@@ -733,36 +737,72 @@ sub sub_updateView()
 	(${debug} > 2) && &sub_debug(5, "<- sub_updateView") ;
 }
 
-sub sub_createTAR()
+sub sub_createTar()
 {
-   # Subroutine to create an Archive TAR file - no longer used, but left for possible future development
+   # Subroutine to create an Archive TAR file
 	my(${blType}) = @_ ;
-	(${debug} > 2) && &sub_debug(5, "-> sub_createTAR(${blType})") ;
+	(${debug} > 2) && &sub_debug(5, "-> sub_createTar(${blType})") ;
    # Get the list of baselines for the view
 	&sub_baselines(${blType}) ;
 	chdir ${usersView} ;
    # Ask for the TAR filename
 	&sub_askQuestion("Enter name for archive TAR file. (eg. CMR1234567): ") ;
    # Define the Archive TAR filename and check to see if it already exists
-	${tarfile} = ${viewroot}.${slash}.${answer}.".tar" ;
+	${tarfile} = ${usersView}.${slash}.${answer}.".tar" ;
 	if (-f ${tarfile} )
 		{
 		  &sub_askQuestion("Remove existing archive TAR file: \"${tarfile}\" ? [Y/N]: ") ;
-		  (${answer} =~ /\bY\b/i) && (unlink(${tarfile}) || &sub_controlExit(4, "Can't remove file: $! -- ${fileTile} exiting --"))  || &sub_controlExit(3, "-- ${fileTile} exiting --") ;
+		  (${answer} =~ /\bY\b/i) && (unlink(${tarfile}) || &sub_controlExit(4, "Can't remove file: $! -- ${programName} exiting --"))  || &sub_controlExit(3, "-- ${programName} exiting --") ;
 		}
+   # Create temporary working TAR Archive directories used to create the Archive TAR file
+	${tarDir} = ${usersView}.${slash}.${answer} ;
+	mkdir(${tarDir}) or &sub_controlExit(4, "Unable to create working directory <${tarDir}>: $!") ;
+	${tarInstallDir} = ${tarDir}.${slash}."install" ;
+	mkdir(${tarInstallDir}) or &sub_controlExit(4, "Unable to create working directory <${tarInstallDir}>: $!") ;
+	${tarCodeDir} = ${tarDir}.${slash}."code" ;
+	mkdir(${tarCodeDir}) or &sub_controlExit(4, "Unable to create working directory <${tarCodeDir}>: $!") ;
 	foreach (@{baselines})
 		{
 		 # Get the baselines component
 		  &sub_baselineComponents($_) ;
 		 # Change directory into the component so as not to include the directory in the TAR
 		  chdir "${usersView}${slash}$project{component}" ;
-		 # Build and run the TAR command
-		  ${cmd} = ${tarExe}." -rvf ".${tarfile}." *" ;
-		  &sub_runSystemCommand(0) ;
+		  ${currentDirectory} = cwd ;
+		 # Find the files and copy into the TAR working directories
+		  find(\&sub_copyFiles, ${currentDirectory}) ;
 		}
+   # Build and run the TAR command
+    chdir "${usersView}" ;
+    ${cmd} = ${tarExe}." -cvf ".${tarfile}." ".${answer} ;
+    &sub_runSystemCommand(0) ;
    # Check the TAR archive file was created
 	(-f ${tarfile} ) && &sub_logmsg(3, "Archive file created: ${tarfile}") || &sub_logmsg(4, "Failed to create Archive file: ${tarfile}") ;
-	(${debug} > 2) && &sub_debug(5, "<- sub_createTAR(${blType})") ;
+   # Remove temporary processing directories
+	(${debug} < 2) && (rmtree(${tarDir}) or &sub_controlExit(4, "Can't remove working directory <${tarDir}>: $!")) ;
+	(${debug} > 2) && &sub_debug(5, "<- sub_createTar(${blType})") ;
+}
+
+sub sub_copyFiles()
+{
+	(${debug} > 1) && &sub_debug(3, "-> sub_copyFiles") ;
+	# Complete path to the file and split into directory and name
+	 my ${absoluteComponentName} = $File::Find::name ;
+	# Process the files only and disregard the directories
+	 return unless -f ${absoluteComponentName} ;
+	 my ${componentFile} = basename(${absoluteComponentName}) ;
+	if (${absoluteComponentName} =~ /${currentDirectory}\/install/)
+		{
+	 	  ${componentFile} = ${tarInstallDir}.${slash}.${componentFile} ;
+		  (${debug} > 2) && &sub_debug(3, "Coping install file: <${absoluteComponentName}> to <${componentFile}>") ;
+		  copy(${absoluteComponentName}, ${componentFile}) or &sub_controlExit(4, "Can't copy file: $!") ;
+		}
+	elsif (${absoluteComponentName} =~ /${currentDirectory}\/code/)
+		{
+	 	  ${componentFile} = ${tarCodeDir}.${slash}.${componentFile} ;
+		  (${debug} > 2) && &sub_debug(3, "Coping code file: <${absoluteComponentName}> to <${componentFile}>") ;
+		  copy(${absoluteComponentName}, ${componentFile}) or &sub_controlExit(4, "Can't copy file: $!") ;
+		}
+	(${debug} > 1) && &sub_debug(5, "<- sub_copyFiles") ;
 }
 
 #########1#########2#########3#########4#########5#########6#########7#########8
@@ -831,42 +871,21 @@ sub sub_createTAR()
 		  &sub_validateCCobject("stream") ;
 		  (${valid} ne $project{"stream"}) && &sub_controlExit(4, "Invalid stream \"$project{\"stream\"}\"") ;
 		  &sub_validateView ;
-		  (${valid}) && &sub_removeView ;
-		  &sub_snapshotView("strip_cr") ;
-		  &sub_baselineElements("found_bls") ;
-		  &sub_updateView ;
-		  ${cmd} = ${ccPerl}." ".${genRelScript}." -debug ".${debug}." -view ".${usersView} ;
-		  &sub_runSystemCommand(1) ;
-		  (${exitLevel} > 0) && &sub_controlExit(4, "Error occured while creating the Map files") ;
-		  ${cmd} = ${ccPerl}." ".${genRelScript}." -debug ".${debug}." -tarView ".${usersView} ;
-		  &sub_runSystemCommand(1) ;
-		  (${exitLevel} > 0) && &sub_controlExit(4, "Error occured while creating the Release files") ;
-		}
- # Release Stream View Option
-	elsif (defined ${releaseStream})
-		{
-		  (${debug} > 1) && &sub_debug(3, "Option: Release Stream View") ;
-		  if (${releaseStage} eq "")
-			{
-			  &sub_askQuestion("Enter Project Stream Name: ", "stream") ;
-			  ${project}{"stream"} = ${answer} ;
-			}
+		  ${noexit} = "release" ;
+		  if (${valid})
+		  	{
+		  	  &sub_removeView ;
+		  	  &sub_snapshotView("strip_cr") ;
+		  	  &sub_baselineElements("found_bls") ;
+		  	  &sub_updateView ;		 
+		  	}
 		  else
-		    {
-			  ${project}{"stream"} = ${releaseStream} ;
-			}
-		  &sub_validateCCobject("stream") ;
-		  (${valid} ne $project{"stream"}) && &sub_controlExit(4, "Invalid stream \"$project{\"stream\"}\"") ;
-		  &sub_validateView ;
-		  (${valid}) && &sub_removeView ;
-		  &sub_snapshotView("strip_cr") ;
-		  &sub_streamElements("found_bls") ;
-		  &sub_updateView ;
-		  ${cmd} = ${ccPerl}." ".${genRelScript}." -debug ".${debug}." -view ".${usersView} ;
-		  &sub_runSystemCommand(1) ;
-		  (${exitLevel} > 0) && &sub_controlExit(4, "Error occured while creating the Map files") ;
-		  ${cmd} = ${ccPerl}." ".${genRelScript}." -debug ".${debug}." -tarView ".${usersView} ;
-		  &sub_runSystemCommand(1) ;
+		  	{
+		  	  &sub_snapshotView("strip_cr") ;
+		  	  &sub_baselineElements("found_bls") ;
+		  	  &sub_updateView ;
+		  	}
+		  &sub_createTar("found_bls") ;
 		  (${exitLevel} > 0) && &sub_controlExit(4, "Error occured while creating the Release files") ;
 		}
  # Stream View Option
@@ -1128,6 +1147,8 @@ sub sub_createTAR()
 		  &sub_validateCCobject("project") ;
 		  (${valid} eq $project{"project"}) && &sub_controlExit(4, "Project already exists: \"$project{\"project\"}\"") ;
 		  ${project}{"stream"} = ${project}{"project"}."_ldn_int" ;
+		  &sub_askQuestion("Enter Project Description: ", "comment") ;
+		  ${project}{"comment"} = ${answer} ;		  
 		  &sub_askQuestion("Enter Foundation Baseline: ", "bl") ;
 		  ${project}{"bl"} = ${answer} ;
 		  &sub_validateCCobject("bl") ;
@@ -1149,16 +1170,9 @@ sub sub_createTAR()
 		  (${debug} > 1) && &sub_debug(3, "Option: Command Line Mode") ; 
 		  while (${commandLineMode})
 		  	{
-		  	  &sub_askQuestion("Enter ccUtil Option: ") ;
-		  	  if (${answer} eq "?")
-		  	  	{
-		  	  	  &sub_usage ;
-		  	  	}
-		  	  else
-		  	  	{
-		  	  	  ${cmd} = ${filename}." ".${answer} ;
-		  	  	  &sub_runSystemCommand(0) ;
-		  	  	}
+		  	  &sub_askQuestion("Enter ccUtil Option: ", "usage") ;
+		   	  ${cmd} = ${filename}." ".${answer} ;
+		   	  &sub_runSystemCommand(0) ;
 		  	}
 		 }
  # Option not recognised.
@@ -1169,4 +1183,4 @@ sub sub_createTAR()
 		}
 
 # Clean and Close
-	&sub_controlExit(3, "-- ${fileTile} completed --") ;
+	&sub_controlExit(3, "-- ${programName} completed --") ;
